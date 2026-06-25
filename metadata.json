@@ -1,0 +1,6 @@
+{
+  "name": "Klerno",
+  "description": "Global tutoring marketplace with 10% commission and timezone-aware scheduling.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

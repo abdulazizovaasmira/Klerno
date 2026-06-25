@@ -1,0 +1,62 @@
+{
+  "collections": {
+    "users": {
+      "fields": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string" },
+        "country": { "type": "string" },
+        "countryCode": { "type": "string" },
+        "timezone": { "type": "string" },
+        "preferredSubjects": { "type": "array" },
+        "bio": { "type": "string" },
+        "hourlyRate": { "type": "number" },
+        "qualifications": { "type": "string" },
+        "rating": { "type": "number" },
+        "reviews": { "type": "array" },
+        "availability": { "type": "array" },
+        "stripeExpressStatus": { "type": "string" },
+        "joinedCommunities": { "type": "array" },
+        "savedTeachers": { "type": "array" },
+        "languages": { "type": "array" },
+        "avatar": { "type": "string" }
+      },
+      "indexes": []
+    },
+    "lessons": {
+      "fields": {
+        "id": { "type": "string" },
+        "teacherId": { "type": "string" },
+        "studentId": { "type": "string" },
+        "teacherName": { "type": "string" },
+        "studentName": { "type": "string" },
+        "subject": { "type": "string" },
+        "date": { "type": "string" },
+        "timeSlot": { "type": "string" },
+        "hourlyRate": { "type": "number" },
+        "price": { "type": "number" },
+        "platformFee": { "type": "number" },
+        "teacherEarnings": { "type": "number" },
+        "status": { "type": "string" },
+        "teacherTimezone": { "type": "string" },
+        "studentTimezone": { "type": "string" },
+        "studentLocalTime": { "type": "string" },
+        "teacherLocalTime": { "type": "string" },
+        "paymentCaptured": { "type": "boolean" }
+      }
+    },
+    "communities": {
+      "fields": {
+        "slug": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "iconName": { "type": "string" },
+        "memberCount": { "type": "number" },
+        "pinnedTeacherIds": { "type": "array" },
+        "discussionFeed": { "type": "array" },
+        "qaList": { "type": "array" }
+      }
+    }
+  }
+}
