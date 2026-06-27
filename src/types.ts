@@ -28,7 +28,8 @@ export interface User {
   rating?: number;
   reviews?: Review[];
   availability?: TimeSlot[];
-  stripeExpressStatus?: 'unlinked' | 'pending' | 'active';
+  stripeExpressStatus?: 'unlinked' | 'pending' | 'active' | 'pending_onboarding';
+  stripeConnectId?: string;
   joinedCommunities?: string[]; // community slugs
   savedTeachers?: string[]; // teacher ids
   languages?: string[]; // e.g., ["English", "Spanish"]

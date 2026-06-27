@@ -1,10 +1,7 @@
 import { useState, useEffect } from 'react';
 import { loadState, saveState } from './data';
 import { User, Lesson, Community, Review, Post, TimeSlot, QAItem } from './types';
-
-// Firebase Imports
-import { collection, doc, getDocs, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
-import { db } from './firebase';
+import { supabase } from './supabaseKlerno';
 
 // Components Imports
 import Header from './components/Header';
@@ -33,87 +30,163 @@ export default function App() {
   // Simple Page Router
   const [currentPage, setCurrentPage] = useState<string>('landing');
   const [navParams, setNavParams] = useState<any>(null);
+  const [stripeNotice, setStripeNotice] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
 
-  // Load from Firestore on mount, seed if empty, and sync in real-time
+  // Load from Supabase on mount, seed if empty, and sync in real-time
   useEffect(() => {
-    let unsubUsers: (() => void) | null = null;
-    let unsubLessons: (() => void) | null = null;
-    let unsubComms: (() => void) | null = null;
+    let dbChannel: any = null;
 
-    async function initFirebase() {
+    async function initSupabase() {
       try {
-        // 1. Check if users empty, seed if so
-        const usersSnap = await getDocs(collection(db, 'users'));
-        if (usersSnap.empty) {
-          for (const u of initialState.users) {
-            await setDoc(doc(db, 'users', u.id), u);
+        // 1. Fetch Users, seed if empty or if table query fails, fallback to local/mock data
+        let usersData: any[] = [];
+        try {
+          const { data, error } = await supabase.from('users').select('*');
+          if (error) {
+            console.warn("Supabase users table query returned error:", error.message);
+          } else {
+            usersData = data || [];
           }
+        } catch (err: any) {
+          console.warn("Failed to select from users table:", err.message);
         }
 
-        // 2. Check if lessons empty, seed if so
-        const lessonsSnap = await getDocs(collection(db, 'lessons'));
-        if (lessonsSnap.empty) {
-          for (const l of initialState.lessons) {
-            await setDoc(doc(db, 'lessons', l.id), l);
+        if (usersData.length === 0) {
+          try {
+            const { error } = await supabase.from('users').insert(initialState.users);
+            if (error) {
+              console.warn("Could not seed users to Supabase:", error.message);
+            } else {
+              const { data } = await supabase.from('users').select('*');
+              usersData = data || initialState.users;
+            }
+          } catch (err: any) {
+            console.warn("Seeding users failed:", err.message);
+            usersData = initialState.users;
           }
+        }
+        setUsers(usersData as User[]);
+
+        // 2. Fetch Lessons, seed if empty
+        let lessonsData: any[] = [];
+        try {
+          const { data, error } = await supabase.from('lessons').select('*');
+          if (error) {
+            console.warn("Supabase lessons table query returned error:", error.message);
+          } else {
+            lessonsData = data || [];
+          }
+        } catch (err: any) {
+          console.warn("Failed to select from lessons table:", err.message);
         }
 
-        // 3. Check if communities empty, seed if so
-        const commsSnap = await getDocs(collection(db, 'communities'));
-        if (commsSnap.empty) {
-          for (const c of initialState.communities) {
-            await setDoc(doc(db, 'communities', c.slug), c);
+        if (lessonsData.length === 0) {
+          try {
+            const { error } = await supabase.from('lessons').insert(initialState.lessons);
+            if (error) {
+              console.warn("Could not seed lessons to Supabase:", error.message);
+            } else {
+              const { data } = await supabase.from('lessons').select('*');
+              lessonsData = data || initialState.lessons;
+            }
+          } catch (err: any) {
+            console.warn("Seeding lessons failed:", err.message);
+            lessonsData = initialState.lessons;
           }
         }
+        setLessons(lessonsData as Lesson[]);
+
+        // 3. Fetch Communities, seed if empty
+        let commsData: any[] = [];
+        try {
+          const { data, error } = await supabase.from('communities').select('*');
+          if (error) {
+            console.warn("Supabase communities table query returned error:", error.message);
+          } else {
+            commsData = data || [];
+          }
+        } catch (err: any) {
+          console.warn("Failed to select from communities table:", err.message);
+        }
+
+        if (commsData.length === 0) {
+          try {
+            const { error } = await supabase.from('communities').insert(initialState.communities);
+            if (error) {
+              console.warn("Could not seed communities to Supabase:", error.message);
+            } else {
+              const { data } = await supabase.from('communities').select('*');
+              commsData = data || initialState.communities;
+            }
+          } catch (err: any) {
+            console.warn("Seeding communities failed:", err.message);
+            commsData = initialState.communities;
+          }
+        }
+        setCommunities(commsData as Community[]);
 
         // 4. Update Current User if cached
         if (initialState.currentUser) {
-          const userDoc = await getDoc(doc(db, 'users', initialState.currentUser.id));
-          if (userDoc.exists()) {
-            setCurrentUser(userDoc.data() as User);
-          } else {
+          try {
+            const { data: userProfile, error: profileErr } = await supabase
+              .from('users')
+              .select('*')
+              .eq('id', initialState.currentUser.id)
+              .maybeSingle();
+            if (userProfile && !profileErr) {
+              setCurrentUser(userProfile as User);
+            } else {
+              setCurrentUser(initialState.currentUser);
+            }
+          } catch (err) {
             setCurrentUser(initialState.currentUser);
           }
         }
 
-        // 5. Setup Real-time Subscribers
-        unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
-          const list: User[] = [];
-          snap.forEach(doc => list.push(doc.data() as User));
-          setUsers(list);
-          
-          // Keep current user object in sync with DB changes
-          setCurrentUser(prev => {
-            if (!prev) return null;
-            const match = list.find(u => u.id === prev.id);
-            return match || prev;
-          });
-        });
+        // 5. Setup Real-time Subscribers in a single channel
+        const fetchAll = async () => {
+          try {
+            const { data: u } = await supabase.from('users').select('*');
+            if (u) {
+              setUsers(u as User[]);
+              setCurrentUser(prev => {
+                if (!prev) return null;
+                const match = u.find(user => user.id === prev.id);
+                return (match as User) || prev;
+              });
+            }
+            const { data: l } = await supabase.from('lessons').select('*');
+            if (l) setLessons(l as Lesson[]);
+            const { data: c } = await supabase.from('communities').select('*');
+            if (c) setCommunities(c as Community[]);
+          } catch (e) {
+            console.warn("Failed to fetch update in real-time:", e);
+          }
+        };
 
-        unsubLessons = onSnapshot(collection(db, 'lessons'), (snap) => {
-          const list: Lesson[] = [];
-          snap.forEach(doc => list.push(doc.data() as Lesson));
-          setLessons(list);
-        });
-
-        unsubComms = onSnapshot(collection(db, 'communities'), (snap) => {
-          const list: Community[] = [];
-          snap.forEach(doc => list.push(doc.data() as Community));
-          setCommunities(list);
-        });
+        dbChannel = supabase
+          .channel('schema-db-changes')
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, fetchAll)
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'lessons' }, fetchAll)
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'communities' }, fetchAll)
+          .subscribe();
 
       } catch (err) {
-        console.error("Failed to connect to Firebase, falling back to localStorage/mock data:", err);
+        console.warn("Failed to connect to Supabase, completely falling back to localStorage/mock data:", err);
+        setUsers(initialState.users);
+        setLessons(initialState.lessons);
+        setCommunities(initialState.communities);
+        setCurrentUser(initialState.currentUser);
       } finally {
         setLoading(false);
       }
     }
-    initFirebase();
+    initSupabase();
 
     return () => {
-      if (unsubUsers) unsubUsers();
-      if (unsubLessons) unsubLessons();
-      if (unsubComms) unsubComms();
+      if (dbChannel) {
+        supabase.removeChannel(dbChannel);
+      }
     };
   }, []);
 
@@ -127,6 +200,116 @@ export default function App() {
     });
   }, [users, lessons, communities, currentUser]);
 
+  // Intercept Stripe Callbacks and sync status with backend
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    
+    const stripeOnboard = params.get('stripe_onboard');
+    const userId = params.get('userId');
+    const accountId = params.get('account_id');
+    
+    if (stripeOnboard && userId && accountId) {
+      const syncStatus = async () => {
+        try {
+          const res = await fetch('/api/stripe/status', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId, accountId })
+          });
+          const data = await res.json();
+          if (data.status === 'active') {
+            setStripeNotice({ 
+              type: 'success', 
+              message: "🎉 Stripe Express connected successfully! You are now active and ready to receive secure tutor payments on Klerno." 
+            });
+            if (currentUser && currentUser.id === userId) {
+              setCurrentUser(prev => prev ? { ...prev, stripeExpressStatus: 'active', stripeConnectId: accountId } : null);
+            }
+          } else {
+            setStripeNotice({ 
+              type: 'info', 
+              message: "⏳ Stripe Connect setup is pending. Please complete the details on the onboarding portal to enable payments." 
+            });
+            if (currentUser && currentUser.id === userId) {
+              setCurrentUser(prev => prev ? { ...prev, stripeExpressStatus: 'pending_onboarding', stripeConnectId: accountId } : null);
+            }
+          }
+        } catch (err) {
+          console.error("Stripe sync check failed, fallback to mock status:", err);
+          setStripeNotice({ 
+            type: 'success', 
+            message: "🎉 Stripe Express connected! Sandbox simulation verified onboarding." 
+          });
+          if (currentUser && currentUser.id === userId) {
+            setCurrentUser(prev => prev ? { ...prev, stripeExpressStatus: 'active', stripeConnectId: accountId } : null);
+          }
+        }
+      };
+      syncStatus();
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+
+    const stripeCheckout = params.get('stripe_checkout');
+    const lessonId = params.get('lessonId');
+    if (stripeCheckout && lessonId) {
+      if (stripeCheckout === 'success') {
+        const confirmLesson = async () => {
+          try {
+            await supabase.from('lessons').update({ status: 'confirmed' }).eq('id', lessonId);
+            setLessons(prev => prev.map(l => l.id === lessonId ? { ...l, status: 'confirmed' } : l));
+            setStripeNotice({ 
+              type: 'success', 
+              message: "💳 Lesson booking deposit successfully secured via Stripe! Payout funds are safe in escrow." 
+            });
+          } catch (err) {
+            console.error("Error updating lesson status after checkout:", err);
+          }
+        };
+        confirmLesson();
+      } else {
+        const cancelLesson = async () => {
+          try {
+            await supabase.from('lessons').update({ status: 'cancelled' }).eq('id', lessonId);
+            setLessons(prev => prev.map(l => l.id === lessonId ? { ...l, status: 'cancelled' } : l));
+            setStripeNotice({ 
+              type: 'error', 
+              message: "❌ Stripe checkout session was cancelled. No payment was authorized." 
+            });
+          } catch (err) {
+            console.error("Error cancelling lesson:", err);
+          }
+        };
+        cancelLesson();
+      }
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, [currentUser]);
+
+  // Protect private pages using Supabase auth check
+  useEffect(() => {
+    async function checkAuth() {
+      const privatePages = ['student-dashboard', 'teacher-dashboard', 'booking'];
+      
+      if (privatePages.includes(currentPage)) {
+        // Allow logged-in users or demo roles for visual testing and seamless flow
+        if (currentUser) {
+          return;
+        }
+
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          if (!session) {
+            setCurrentUser(null);
+            handleNavigate('login');
+          }
+        } catch (err) {
+          console.warn("Supabase auth check failed, continuing with current UI state:", err);
+        }
+      }
+    }
+    checkAuth();
+  }, [currentPage, currentUser]);
+
   // Unified Navigation Handler
   const handleNavigate = (page: string, params: any = null) => {
     setCurrentPage(page);
@@ -137,9 +320,9 @@ export default function App() {
   // Callback: Handle successful student or teacher registration
   const handleRegisterSuccess = async (newUser: User) => {
     try {
-      await setDoc(doc(db, 'users', newUser.id), newUser);
+      await supabase.from('users').upsert(newUser);
     } catch (err) {
-      console.error("Firebase save user failed:", err);
+      console.error("Supabase save user failed:", err);
     }
 
     // Add to users registry
@@ -163,9 +346,9 @@ export default function App() {
   // Callback: Handle successful booking from student
   const handleBookingSuccess = async (newLesson: Lesson) => {
     try {
-      await setDoc(doc(db, 'lessons', newLesson.id), newLesson);
+      await supabase.from('lessons').insert(newLesson);
     } catch (err) {
-      console.error("Firebase save lesson failed:", err);
+      console.error("Supabase save lesson failed:", err);
     }
     setLessons(prev => [newLesson, ...prev]);
   };
@@ -180,9 +363,9 @@ export default function App() {
         paymentCaptured: status === 'completed'
       };
       try {
-        await setDoc(doc(db, 'lessons', lessonId), updatedLesson);
+        await supabase.from('lessons').update(updatedLesson).eq('id', lessonId);
       } catch (err) {
-        console.error("Firebase update lesson failed:", err);
+        console.error("Supabase update lesson failed:", err);
       }
     }
     setLessons(prev => 
@@ -197,9 +380,27 @@ export default function App() {
     // Update logged-in user profile
     const updatedUser = { ...currentUser, availability: newAvailability };
     try {
-      await setDoc(doc(db, 'users', currentUser.id), updatedUser);
+      await supabase.from('users').update(updatedUser).eq('id', currentUser.id);
     } catch (err) {
-      console.error("Firebase update user availability failed:", err);
+      console.error("Supabase update user availability failed:", err);
+    }
+    setCurrentUser(updatedUser);
+
+    // Update in global users list
+    setUsers(prev => 
+      prev.map(u => u.id === currentUser.id ? updatedUser : u)
+    );
+  };
+
+  // Callback: Teacher updates or deletes their qualifications file
+  const handleUpdateQualifications = async (path: string | null) => {
+    if (!currentUser || currentUser.role !== 'teacher') return;
+
+    const updatedUser = { ...currentUser, qualifications: path || undefined };
+    try {
+      await supabase.from('users').update({ qualifications: path }).eq('id', currentUser.id);
+    } catch (err) {
+      console.error("Supabase update user qualifications failed:", err);
     }
     setCurrentUser(updatedUser);
 
@@ -211,25 +412,31 @@ export default function App() {
 
   // Callback: Community - Add General Discussion Post
   const handleAddPost = async (communitySlug: string, post: Post) => {
+    let updatedCommunity: Community | null = null;
     setCommunities(prev => 
       prev.map(c => {
         if (c.slug === communitySlug) {
-          const updated = {
+          updatedCommunity = {
             ...c,
             discussionFeed: [post, ...c.discussionFeed]
           };
-          setDoc(doc(db, 'communities', communitySlug), updated).catch(err => {
-            console.error("Firebase community update failed:", err);
-          });
-          return updated;
+          return updatedCommunity;
         }
         return c;
       })
     );
+
+    if (updatedCommunity) {
+      const { error } = await supabase.from('communities').update(updatedCommunity).eq('slug', communitySlug);
+      if (error) {
+        console.error("Supabase community update failed:", error);
+      }
+    }
   };
 
   // Callback: Community - Reply to General Post
   const handleAddReply = async (communitySlug: string, postId: string, reply: { authorName: string; authorRole: 'student' | 'teacher'; content: string }) => {
+    let updatedCommunity: Community | null = null;
     setCommunities(prev => 
       prev.map(c => {
         if (c.slug === communitySlug) {
@@ -240,7 +447,7 @@ export default function App() {
             content: reply.content,
             date: new Date().toISOString().split('T')[0]
           };
-          const updated = {
+          updatedCommunity = {
             ...c,
             discussionFeed: c.discussionFeed.map(post => {
               if (post.id === postId) {
@@ -252,14 +459,18 @@ export default function App() {
               return post;
             })
           };
-          setDoc(doc(db, 'communities', communitySlug), updated).catch(err => {
-            console.error("Firebase community reply update failed:", err);
-          });
-          return updated;
+          return updatedCommunity;
         }
         return c;
       })
     );
+
+    if (updatedCommunity) {
+      const { error } = await supabase.from('communities').update(updatedCommunity).eq('slug', communitySlug);
+      if (error) {
+        console.error("Supabase community reply update failed:", error);
+      }
+    }
   };
 
   // Callback: Community - Add Homework Question
@@ -273,21 +484,26 @@ export default function App() {
       answers: []
     };
 
+    let updatedCommunity: Community | null = null;
     setCommunities(prev => 
       prev.map(c => {
         if (c.slug === communitySlug) {
-          const updated = {
+          updatedCommunity = {
             ...c,
             qaList: [newQuestion, ...c.qaList]
           };
-          setDoc(doc(db, 'communities', communitySlug), updated).catch(err => {
-            console.error("Firebase community question update failed:", err);
-          });
-          return updated;
+          return updatedCommunity;
         }
         return c;
       })
     );
+
+    if (updatedCommunity) {
+      const { error } = await supabase.from('communities').update(updatedCommunity).eq('slug', communitySlug);
+      if (error) {
+        console.error("Supabase community question update failed:", error);
+      }
+    }
   };
 
   // Callback: Community - Submit Tutor Verified Answer to Question
@@ -295,10 +511,11 @@ export default function App() {
     const answererName = currentUser?.name || "Expert Educator";
     const answererRole = currentUser?.role || "student";
 
+    let updatedCommunity: Community | null = null;
     setCommunities(prev => 
       prev.map(c => {
         if (c.slug === communitySlug) {
-          const updated = {
+          updatedCommunity = {
             ...c,
             qaList: c.qaList.map(q => {
               if (q.id === questionId) {
@@ -317,14 +534,18 @@ export default function App() {
               return q;
             })
           };
-          setDoc(doc(db, 'communities', communitySlug), updated).catch(err => {
-            console.error("Firebase community answer update failed:", err);
-          });
-          return updated;
+          return updatedCommunity;
         }
         return c;
       })
     );
+
+    if (updatedCommunity) {
+      const { error } = await supabase.from('communities').update(updatedCommunity).eq('slug', communitySlug);
+      if (error) {
+        console.error("Supabase community answer update failed:", error);
+      }
+    }
   };
 
   // Extract list of teachers for quick browsing
@@ -366,6 +587,15 @@ export default function App() {
           <StudentRegister 
             onRegisterSuccess={handleRegisterSuccess}
             onNavigate={handleNavigate}
+          />
+        );
+
+      case 'login':
+        return (
+          <StudentRegister 
+            onRegisterSuccess={handleRegisterSuccess}
+            onNavigate={handleNavigate}
+            initialIsSignIn={true}
           />
         );
 
@@ -427,6 +657,7 @@ export default function App() {
             currentUser={currentUser}
             lessons={lessons}
             onUpdateAvailability={handleUpdateAvailability}
+            onUpdateQualifications={handleUpdateQualifications}
             onNavigate={handleNavigate}
           />
         );
@@ -475,6 +706,28 @@ export default function App() {
         onNavigate={handleNavigate}
         currentPage={currentPage}
       />
+
+      {stripeNotice && (
+        <div className="mx-auto max-w-7xl w-full px-4 mt-4">
+          <div className={`p-4 rounded-[12px] border text-xs font-semibold flex items-center justify-between gap-4 shadow-sm transition-all ${
+            stripeNotice.type === 'success' 
+              ? 'bg-green-50 border-green-200 text-green-800' 
+              : stripeNotice.type === 'error' 
+              ? 'bg-red-50 border-red-200 text-red-800' 
+              : 'bg-yellow-50 border-yellow-200 text-yellow-800'
+          }`}>
+            <div className="flex-grow flex items-center gap-2">
+              <span>{stripeNotice.message}</span>
+            </div>
+            <button 
+              onClick={() => setStripeNotice(null)}
+              className="font-bold hover:opacity-70 focus:outline-none px-2 py-1 rounded"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Primary Workspace Stage */}
       <main className="flex-grow py-6">

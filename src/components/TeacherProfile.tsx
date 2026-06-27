@@ -3,8 +3,9 @@ import { User, TimeSlot } from '../types';
 import { COUNTRIES, getDualTimeDetails, formatInTimezone } from '../data';
 import { 
   Award, Star, Clock, Calendar, ShieldCheck, Languages, 
-  MapPin, Globe, CreditCard, ChevronRight, MessageSquare 
+  MapPin, Globe, CreditCard, ChevronRight, MessageSquare, ExternalLink 
 } from 'lucide-react';
+import { supabase } from '../supabaseKlerno';
 
 interface TeacherProfileProps {
   teacherId: string;
@@ -22,6 +23,31 @@ export default function TeacherProfile({
   
   const [teacher, setTeacher] = useState<User | null>(null);
   const [studentTimezone, setStudentTimezone] = useState("America/New_York");
+  const [signedUrl, setSignedUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function getSignedUrl() {
+      if (teacher && teacher.qualifications) {
+        if (teacher.qualifications.startsWith('http://') || teacher.qualifications.startsWith('https://')) {
+          setSignedUrl(teacher.qualifications);
+        } else if (teacher.qualifications.includes('/')) {
+          try {
+            const { data, error } = await supabase.storage.from('Klerno').createSignedUrl(teacher.qualifications, 86400); // 24 hours
+            if (data && data.signedUrl) {
+              setSignedUrl(data.signedUrl);
+            }
+          } catch (err) {
+            console.error("Error creating signed URL:", err);
+          }
+        } else {
+          setSignedUrl(null);
+        }
+      } else {
+        setSignedUrl(null);
+      }
+    }
+    getSignedUrl();
+  }, [teacher]);
 
   useEffect(() => {
     const found = mockTeachers.find(t => t.id === teacherId);
@@ -124,7 +150,21 @@ export default function TeacherProfile({
                 <Award className="w-5 h-5 text-secondary shrink-0 mt-0.5" />
                 <div className="space-y-0.5">
                   <div className="text-xs font-extrabold uppercase tracking-wider text-[#0c0c10]">Academic Credentials Verified</div>
-                  <div className="text-sm font-semibold text-gray-700">{teacher.qualifications}</div>
+                  <div className="text-sm font-semibold text-gray-700">
+                    {signedUrl ? (
+                      <a 
+                        href={signedUrl} 
+                        target="_blank" 
+                        rel="noopener noreferrer" 
+                        className="text-primary hover:underline flex items-center gap-1.5"
+                      >
+                        <span>View Verified Document ({teacher.qualifications.split('/').pop()})</span>
+                        <ExternalLink className="w-3.5 h-3.5 text-primary shrink-0" />
+                      </a>
+                    ) : (
+                      teacher.qualifications || "No academic credentials provided."
+                    )}
+                  </div>
                   <p className="text-[10px] text-gray-400 font-medium">Verified by Klerno Academic Verification Services. Background checks and transcript matching completed.</p>
                 </div>
               </div>

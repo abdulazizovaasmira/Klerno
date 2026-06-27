@@ -72,42 +72,82 @@ export default function BookingPage({
   // Get dual time formatting
   const dualTime = getDualTimeDetails(dateStr, timeStr, teacher.timezone, studentTz);
 
-  const handlePayment = (e: React.FormEvent) => {
+  const handlePayment = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
 
-    // Simulate Stripe payment processing
+    const lessonId = `l_${Date.now()}`;
+    const studentName = currentUser?.name || "Guest Student";
+    const studentId = currentUser?.id || "student_guest";
+
+    const newLesson: Lesson = {
+      id: lessonId,
+      teacherId: teacher.id,
+      studentId: studentId,
+      teacherName: teacher.name,
+      studentName: studentName,
+      subject: teacher.preferredSubjects[0] || "General",
+      date: dateStr,
+      timeSlot: timeStr,
+      hourlyRate: price,
+      price: price,
+      platformFee: platformFee,
+      teacherEarnings: teacherEarnings,
+      status: 'pending', // starts as pending when paying with real Stripe
+      teacherTimezone: teacher.timezone,
+      studentTimezone: studentTz,
+      studentLocalTime: dualTime.studentTime.split(' GMT')[0],
+      teacherLocalTime: dualTime.teacherTime.split(' GMT')[0],
+      paymentCaptured: false // holds funds till confirmed complete
+    };
+
+    // If teacher has a real Stripe Connect ID, proceed with real checkout session
+    if (teacher.stripeConnectId && !teacher.stripeConnectId.startsWith('acct_mock')) {
+      try {
+        // Save the pending lesson first so we can confirm it on return callback
+        onBookingSuccess(newLesson);
+
+        const response = await fetch("/api/stripe/checkout", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            lessonId: lessonId,
+            studentId: studentId,
+            studentName: studentName,
+            teacherId: teacher.id,
+            teacherName: teacher.name,
+            subject: newLesson.subject,
+            date: dateStr,
+            time: timeStr,
+            price: price,
+            teacherStripeId: teacher.stripeConnectId
+          })
+        });
+
+        const data = await response.json();
+        if (data.url) {
+          window.location.href = data.url;
+          return;
+        } else {
+          throw new Error(data.error || "Failed to create Stripe Checkout session");
+        }
+      } catch (err) {
+        console.warn("Real Stripe checkout failed, falling back to instant simulation mode:", err);
+      }
+    }
+
+    // Fallback: Simulate Stripe payment processing
     setTimeout(() => {
       setIsSubmitting(false);
       setBookingCompleted(true);
 
-      const lessonId = `l_${Date.now()}`;
-      const studentName = currentUser?.name || "Guest Student";
-      const studentId = currentUser?.id || "student_guest";
-
-      const newLesson: Lesson = {
-        id: lessonId,
-        teacherId: teacher.id,
-        studentId: studentId,
-        teacherName: teacher.name,
-        studentName: studentName,
-        subject: teacher.preferredSubjects[0] || "General",
-        date: dateStr,
-        timeSlot: timeStr,
-        hourlyRate: price,
-        price: price,
-        platformFee: platformFee,
-        teacherEarnings: teacherEarnings,
-        status: 'confirmed', // immediately confirmed for simulation convenience
-        teacherTimezone: teacher.timezone,
-        studentTimezone: studentTz,
-        studentLocalTime: dualTime.studentTime.split(' GMT')[0],
-        teacherLocalTime: dualTime.teacherTime.split(' GMT')[0],
-        paymentCaptured: false // holds funds till confirmed complete
+      const confirmedLesson: Lesson = {
+        ...newLesson,
+        status: 'confirmed' // immediately confirmed for simulation convenience
       };
 
-      setCreatedLesson(newLesson);
-      onBookingSuccess(newLesson);
+      setCreatedLesson(confirmedLesson);
+      onBookingSuccess(confirmedLesson);
     }, 2500);
   };
 
